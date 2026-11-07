@@ -1,0 +1,6 @@
+# Set DOMAIN in .env to your API hostname (e.g. api.directhome.in) and Caddy
+# will fetch + renew a Let's Encrypt cert automatically.
+# Leave it unset/empty to serve plain HTTP on port 80 (demo/testing only).
+{$DOMAIN::80} {
+	reverse_proxy backend:8000
+}

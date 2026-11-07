@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.schemas.common import error_body
 
@@ -11,8 +12,8 @@ app = FastAPI(title="DirectHome API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000",
-    "https://directhome-jet.vercel.app",
+    allow_origins=[
+        o.strip() for o in settings.cors_origins.split(",") if o.strip()
     ],
     allow_credentials=True,
     allow_methods=["*"],
