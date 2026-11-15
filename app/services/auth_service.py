@@ -78,6 +78,9 @@ def authenticate(db: Session, identifier: str, password: str) -> User:
         raise unauthorized("Invalid credentials")
     if not user.is_active:
         raise unauthorized("Account is deactivated")
+    status = user.account_status
+    if status and (status == "PERMANENTLY_BANNED" or getattr(status, "value", None) == "PERMANENTLY_BANNED"):
+        raise unauthorized("Account is permanently banned")
     user.last_login_at = datetime.now(timezone.utc)
     db.flush()
     return user

@@ -93,6 +93,7 @@ class Property(Base, TimestampMixin):
     extra_attributes: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    address_fingerprint: Mapped[str | None] = mapped_column(String(64))
 
     owner: Mapped["User"] = relationship(
         back_populates="properties", foreign_keys=[owner_id]
@@ -141,6 +142,7 @@ class Property(Base, TimestampMixin):
         Index("ix_properties_sale_price", "sale_price"),
         Index("ix_properties_available_from", "available_from"),
         Index("ix_properties_created_at", "created_at"),
+        Index("ix_properties_address_fingerprint", "address_fingerprint"),
     )
 
 

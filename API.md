@@ -177,6 +177,47 @@ Rules: `RENT|PG|SHARED` need `rent_amount`; `SALE` needs `sale_price` (enforced 
 
 ---
 
+## Verification & anti-broker (Bearer)
+
+**Listing prerequisites** — sellers must accept anti-broker T&C + declare ownership before creating/submitting/editing listings (`PROFILE_INCOMPLETE` otherwise). Restricted/suspended/banned accounts are blocked at publish.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/users/me/verification/status` | kyc/account status, declaration, terms, `can_list`, `missing_requirements` |
+| POST | `/users/me/verification/accept-terms` | `{ "version": "1.0" }` — must match current terms version |
+| POST | `/users/me/verification/owner-declaration` | `{ "role": "OWNER" \| "AUTHORIZED_REPRESENTATIVE" }` |
+| POST | `/users/me/verification/send-code` | `{ "channel": "PHONE" \| "EMAIL" }` — dev echoes `dev_code` outside production |
+| POST | `/users/me/verification/verify-code` | `{ "channel", "code" }` → sets phone/email verified |
+| POST | `/properties/{id}/verification-documents` | `{ "document_type_id", "file_url" }` — property doc, owner only; pdf/img types only |
+| GET | `/properties/{id}/verification-status` | Owner: status, `rejection_reason`, docs, `duplicate_flag` |
+| POST | `/users/me/appeals` | `{ "message", "property_id?" }` — appeal a restriction/flag |
+| GET | `/users/me/appeals` | My appeals |
+
+**Reports** — `POST /properties/{id}/reports` is one-per-user-per-property (`409 ALREADY_REPORTED`); `INCORRECT_OWNERSHIP` added to reasons. ≥3 OPEN reports (config `report.flag_threshold`) auto-FLAG the listing — hides it from search without scoring the owner.
+
+**Risk engine** — `user_risk_events` store scored events (deduped). Score → status: ≥30 `UNDER_REVIEW`, ≥50 `TEMPORARILY_RESTRICTED`, ≥70 `SUSPENDED` — auto-escalate only; de-escalation and bans are manual admin actions. Rule scores/thresholds editable via `GET/POST /admin/fraud/config`.
+
+## Admin — fraud & moderation (Bearer + ADMIN)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/admin/verifications/pending` | PENDING_REVIEW queue + owner risk/KYC context |
+| GET | `/admin/fraud/flagged-users?min_score=&account_status=` | Users by risk score |
+| GET | `/admin/fraud/users/{id}/risk-history` | Risk events for a user |
+| GET | `/admin/fraud/reported-properties?status=` | Reports + property_title + reporter_name |
+| GET | `/admin/fraud/duplicate-listings?status=` | Detected duplicate pairs |
+| POST | `/admin/fraud/duplicate-matches/{id}/confirm` · `/dismiss` | Review a pair |
+| POST | `/admin/properties/{id}/moderation` | `{ action: UNFLAG\|SUSPEND\|REINSTATE, reason }` |
+| POST | `/admin/users/{id}/restriction` | `{ action: RESTRICT\|SUSPEND\|UNSUSPEND\|BAN, reason }` |
+| POST | `/admin/documents/{id}/request-info` | `{ note }` → REQUIRES_ADDITIONAL_INFO |
+| POST | `/admin/documents/{id}/reject` | `{ reason, ownership_mismatch? }` — mismatch scores +50 |
+| POST | `/admin/reports/{id}/resolve` | `{ validated?: true, note? }` — validated reports score owner |
+| GET | `/admin/appeals?status=` · POST `/admin/appeals/{id}/resolve` | Appeal queue; approve → account ACTIVE |
+| GET/POST | `/admin/fraud/config` | View/update rule scores & thresholds |
+| GET | `/admin/audit-logs?action=&target_type=` | Admin + system action trail |
+
+---
+
 ## Error codes
 
 `VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, PROPERTY_NOT_FOUND, PHONE_TAKEN, EMAIL_TAKEN, LISTING_INCOMPLETE, INVALID_STATUS_TRANSITION, NOT_EDITABLE, CANNOT_DELETE, ALREADY_SAVED, NOT_SAVED, OWN_LISTING, INVALID_CONTACT_METHOD, INVALID_REASON, INVALID_DOC_TYPE, ALREADY_REVIEWED, INQUIRY_NOT_FOUND, REPORT_NOT_FOUND, DOCUMENT_NOT_FOUND, USER_NOT_FOUND, ROLE_MISSING`

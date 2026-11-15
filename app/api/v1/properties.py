@@ -9,6 +9,7 @@ from app.api.deps import (
     client_ip_hash,
     get_current_user,
     get_optional_user,
+    require_lister,
     require_seller,
 )
 from app.core.database import get_db
@@ -20,9 +21,11 @@ from app.models import (
     SavedProperty,
     User,
 )
+from app.core.ratelimit import rate_limit
 from app.schemas.common import PageMeta, PageParams, ok
 from app.schemas.misc import InquiryIn
 from app.schemas.property import PropertyIn, PropertyUpdate, RejectIn, ReportIn
+from app.services import broker_service as broker
 from app.services import property_service as svc
 
 router = APIRouter(tags=["properties"])
@@ -105,10 +108,10 @@ def property_detail(
 @router.post("/properties", status_code=201)
 def create_property(
     payload: PropertyIn,
-    user: User = Depends(require_seller),
+    user: User = Depends(require_lister),
     db: Session = Depends(get_db),
 ):
-    """Create a DRAFT listing (details + location + media + amenities in one call)."""
+    """Create a DRAFT listing — requires declaration + terms + clean account."""
     prop = svc.create_property(db, user, payload)
     return ok(svc.detail_from(prop).model_dump(mode="json"))
 
@@ -117,12 +120,18 @@ def create_property(
 def update_property(
     property_id: int,
     payload: PropertyUpdate,
-    user: User = Depends(require_seller),
+    user: User = Depends(require_lister),
     db: Session = Depends(get_db),
 ):
     """Edit own listing. Editing an ACTIVE listing sends it back to PENDING_REVIEW."""
     prop = svc.get_owned_property(db, property_id, user)
     prop = svc.update_property(db, prop, payload)
+    if prop.status == "PENDING_REVIEW" or (
+        prop.status and prop.status.value == "PENDING_REVIEW"
+    ):
+        broker.on_property_submitted(db, user, prop)
+        db.commit()
+        prop = svc.get_property(db, prop.id)
     return ok(svc.detail_from(prop).model_dump(mode="json"))
 
 
@@ -152,7 +161,7 @@ def my_properties(
 ):
     """Seller's own listings in every status (dashboard)."""
     from sqlalchemy import func, select
-    from app.models import Property
+    from app.models import Property, PropertyStatusHistory
 
     q = select(Property).where(Property.owner_id == user.id)
     total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
@@ -162,8 +171,29 @@ def my_properties(
         .limit(page_params.limit)
         .options(*svc._eager())
     ).all()
+    # latest rejection reason per listing, so the dashboard can show "why"
+    ids = [p.id for p in rows]
+    reasons: dict[int, str] = {}
+    if ids:
+        hist = db.scalars(
+            select(PropertyStatusHistory)
+            .where(
+                PropertyStatusHistory.property_id.in_(ids),
+                PropertyStatusHistory.new_status == "REJECTED",
+                PropertyStatusHistory.reason.is_not(None),
+            )
+            .order_by(PropertyStatusHistory.created_at.desc())
+        ).all()
+        for h in hist:
+            reasons.setdefault(h.property_id, h.reason)
     return ok(
-        [svc.card_from(p).model_dump(mode="json") for p in rows],
+        [
+            {
+                **svc.card_from(p).model_dump(mode="json"),
+                "rejection_reason": reasons.get(p.id),
+            }
+            for p in rows
+        ],
         PageMeta(page=page_params.page, limit=page_params.limit, total=total),
     )
 
@@ -178,10 +208,14 @@ def _transition(property_id: int, action: str, user: User, db: Session,
 
 
 @router.post("/properties/{property_id}/submit")
-def submit(property_id: int, user: User = Depends(require_seller),
+def submit(property_id: int, user: User = Depends(require_lister),
            db: Session = Depends(get_db)):
-    """DRAFT/REJECTED → PENDING_REVIEW (validates listing completeness)."""
-    return _transition(property_id, "submit", user, db)
+    """DRAFT/REJECTED → PENDING_REVIEW (validates completeness, runs broker checks)."""
+    prop = svc.get_owned_property(db, property_id, user)
+    prop = svc.transition(db, prop, "submit", user)
+    broker.on_property_submitted(db, user, prop)
+    db.commit()
+    return ok(svc.detail_from(prop).model_dump(mode="json"))
 
 
 @router.post("/properties/{property_id}/pause")
@@ -311,26 +345,44 @@ def create_inquiry(
     )
 
 
-@router.post("/properties/{property_id}/reports", status_code=201)
+@router.post(
+    "/properties/{property_id}/reports",
+    status_code=201,
+    dependencies=[Depends(rate_limit("report", 10, 300))],
+)
 def report_property(
     property_id: int,
     payload: ReportIn,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Flag a listing (fake, broker, scam, etc.) for admin review."""
+    """Flag a listing (fake, broker, scam, etc.) for admin review.
+
+    One report per user per property. Listings auto-flag for review once
+    OPEN reports cross the configured threshold — this never scores or
+    suspends the owner on its own.
+    """
+    from app.models import enums
+
     svc.get_property(db, property_id)
-    reasons = {"FAKE_LISTING", "ALREADY_RENTED", "ALREADY_SOLD",
-               "WRONG_INFORMATION", "BROKER", "DUPLICATE", "SCAM",
-               "INAPPROPRIATE", "OTHER"}
-    if payload.reason not in reasons:
+    valid_reasons = {r.value for r in enums.ReportReason}
+    if payload.reason not in valid_reasons:
         raise bad_request("INVALID_REASON", "Unknown report reason")
-    db.add(
-        PropertyReport(
-            property_id=property_id, reported_by=user.id,
-            reason=payload.reason, description=payload.description,
+    exists = db.scalar(
+        select(PropertyReport.id).where(
+            PropertyReport.property_id == property_id,
+            PropertyReport.reported_by == user.id,
         )
     )
+    if exists:
+        raise conflict("ALREADY_REPORTED", "You already reported this listing")
+    report = PropertyReport(
+        property_id=property_id, reported_by=user.id,
+        reason=payload.reason, description=payload.description,
+    )
+    db.add(report)
+    db.flush()
+    broker.on_report_created(db, report)
     db.commit()
     return ok({"message": "Report submitted"})
 

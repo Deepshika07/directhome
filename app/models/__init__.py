@@ -20,6 +20,13 @@ from app.models.engagement import (
     PropertyView,
     SavedProperty,
 )
+from app.models.antifraud import (
+    AdminAuditLog,
+    Appeal,
+    DuplicateMatch,
+    FraudConfig,
+    UserRiskEvent,
+)
 
 __all__ = [
     "Base",
@@ -45,4 +52,9 @@ __all__ = [
     "PropertyReport",
     "PropertyView",
     "SavedProperty",
+    "AdminAuditLog",
+    "Appeal",
+    "DuplicateMatch",
+    "FraudConfig",
+    "UserRiskEvent",
 ]

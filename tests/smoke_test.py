@@ -69,6 +69,14 @@ r = client.get("/api/v1/auth/me", headers=auth(seller_token))
 check("auth/me returns roles", r.status_code == 200
       and "SELLER" in r.json()["data"]["roles"], r.text[:200])
 
+# ---------- 1b. listing prerequisites (anti-broker) ----------
+r = client.post("/api/v1/users/me/verification/accept-terms",
+                headers=auth(seller_token), json={"version": "1.0"})
+check("seller accepts terms", r.status_code == 200, r.text[:200])
+r = client.post("/api/v1/users/me/verification/owner-declaration",
+                headers=auth(seller_token), json={"role": "OWNER"})
+check("seller declares ownership", r.status_code == 200, r.text[:200])
+
 # ---------- 2. KYC ----------
 r = client.get("/api/v1/meta/filters")
 filters = r.json()["data"]

@@ -30,6 +30,8 @@ class PropertyStatus(str, enum.Enum):
     SOLD = "SOLD"
     EXPIRED = "EXPIRED"
     REJECTED = "REJECTED"
+    FLAGGED = "FLAGGED"
+    SUSPENDED = "SUSPENDED"
 
 
 class AvailabilityStatus(str, enum.Enum):
@@ -58,6 +60,7 @@ class DocumentStatus(str, enum.Enum):
     PENDING = "PENDING"
     VERIFIED = "VERIFIED"
     REJECTED = "REJECTED"
+    REQUIRES_ADDITIONAL_INFO = "REQUIRES_ADDITIONAL_INFO"
 
 
 class DocumentAppliesTo(str, enum.Enum):
@@ -113,6 +116,7 @@ class ReportReason(str, enum.Enum):
     ALREADY_RENTED = "ALREADY_RENTED"
     ALREADY_SOLD = "ALREADY_SOLD"
     WRONG_INFORMATION = "WRONG_INFORMATION"
+    INCORRECT_OWNERSHIP = "INCORRECT_OWNERSHIP"
     BROKER = "BROKER"
     DUPLICATE = "DUPLICATE"
     SCAM = "SCAM"
@@ -125,6 +129,40 @@ class ReportStatus(str, enum.Enum):
     UNDER_REVIEW = "UNDER_REVIEW"
     RESOLVED = "RESOLVED"
     REJECTED = "REJECTED"
+
+
+class AccountStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    TEMPORARILY_RESTRICTED = "TEMPORARILY_RESTRICTED"
+    SUSPENDED = "SUSPENDED"
+    PERMANENTLY_BANNED = "PERMANENTLY_BANNED"
+
+
+class RiskEventType(str, enum.Enum):
+    UNRELATED_LISTINGS = "UNRELATED_LISTINGS"
+    MULTI_ACCOUNT_PHONE = "MULTI_ACCOUNT_PHONE"
+    CROSS_ACCOUNT_DUPLICATE_PROPERTY = "CROSS_ACCOUNT_DUPLICATE_PROPERTY"
+    REPEATED_CONTENT = "REPEATED_CONTENT"
+    OWNERSHIP_MISMATCH = "OWNERSHIP_MISMATCH"
+    VALIDATED_COMPLAINTS = "VALIDATED_COMPLAINTS"
+
+
+class DuplicateMatchStatus(str, enum.Enum):
+    UNREVIEWED = "UNREVIEWED"
+    CONFIRMED = "CONFIRMED"
+    DISMISSED = "DISMISSED"
+
+
+class AppealStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class OwnerDeclarationRole(str, enum.Enum):
+    OWNER = "OWNER"
+    AUTHORIZED_REPRESENTATIVE = "AUTHORIZED_REPRESENTATIVE"
 
 
 class OtpChannel(str, enum.Enum):

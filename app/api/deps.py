@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.errors import forbidden, unauthorized
+from app.core.errors import ApiError, forbidden, unauthorized
 from app.core.security import decode_access_token
 from app.models import Role, User, UserRole
 
@@ -22,6 +22,10 @@ def _user_from_token(db: Session, token: str) -> User:
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise unauthorized("Account not found or deactivated")
+    if getattr(user, "account_status", None) == "PERMANENTLY_BANNED" or (
+        user.account_status and user.account_status.value == "PERMANENTLY_BANNED"
+    ):
+        raise unauthorized("Account is permanently banned")
     return user
 
 
@@ -70,6 +74,47 @@ def require_roles(*codes: str):
 
 require_seller = require_roles("SELLER", "ADMIN")
 require_admin = require_roles("ADMIN")
+
+PUBLISH_BLOCKING = {"TEMPORARILY_RESTRICTED", "SUSPENDED", "PERMANENTLY_BANNED"}
+
+
+def require_lister(
+    user: User = Depends(require_seller), db: Session = Depends(get_db)
+) -> User:
+    """SELLER who is allowed to create/publish listings right now.
+
+    Blocks restricted accounts and enforces profile completeness
+    (owner declaration + anti-broker terms + contact info).
+    """
+    status = (
+        user.account_status.value
+        if hasattr(user.account_status, "value")
+        else user.account_status
+    )
+    if status in PUBLISH_BLOCKING:
+        raise forbidden(
+            f"Your account is {status.lower().replace('_', ' ')} — "
+            "you cannot create or publish listings"
+        )
+    missing = []
+    if not user.owner_declaration_at:
+        missing.append("owner declaration")
+    if not user.terms_accepted_at:
+        missing.append("anti-broker terms acceptance")
+    if not user.name or not user.phone:
+        missing.append("profile name/phone")
+    from app.services import broker_service
+
+    if broker_service.get_config(db).get("listing.require_verified_channel"):
+        if not (user.phone_verified or user.email_verified):
+            missing.append("phone or email verification")
+    if missing:
+        raise ApiError(
+            403,
+            "PROFILE_INCOMPLETE",
+            "Complete these before listing: " + ", ".join(missing),
+        )
+    return user
 
 
 def client_ip_hash(request: Request) -> str | None:

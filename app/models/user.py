@@ -15,7 +15,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
-from app.models.enums import KycStatus, OtpChannel, OtpPurpose
+from app.models.enums import (
+    AccountStatus,
+    KycStatus,
+    OtpChannel,
+    OtpPurpose,
+    OwnerDeclarationRole,
+)
 
 
 class Role(Base):
@@ -53,6 +59,28 @@ class User(Base, TimestampMixin):
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
+    )
+    account_status: Mapped[AccountStatus] = mapped_column(
+        Enum(AccountStatus, name="account_status"),
+        nullable=False,
+        server_default=AccountStatus.ACTIVE.value,
+    )
+    account_status_reason: Mapped[str | None] = mapped_column(String(255))
+    account_status_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    risk_score: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    owner_declaration_role: Mapped[OwnerDeclarationRole | None] = mapped_column(
+        Enum(OwnerDeclarationRole, name="owner_declaration_role")
+    )
+    owner_declaration_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    terms_version: Mapped[str | None] = mapped_column(String(20))
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

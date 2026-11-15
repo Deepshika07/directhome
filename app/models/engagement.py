@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -114,11 +115,18 @@ class PropertyReport(Base):
         BigInteger, ForeignKey("users.id", ondelete="SET NULL")
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_note: Mapped[str | None] = mapped_column(Text)
+    validated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "property_id", "reported_by", name="uq_report_property_reporter"
+        ),
         Index("ix_property_reports_property_id", "property_id"),
         Index("ix_property_reports_status", "status"),
     )
