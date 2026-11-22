@@ -10,7 +10,7 @@ all-time. Everything is checked in the service layer (like the L1 gate).
 """
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError, bad_request, not_found
@@ -44,21 +44,31 @@ def _expire_if_needed(sub: UserSubscription) -> None:
         sub.status = "EXPIRED"
 
 
+def expire_stale(db: Session, user_id: int | None = None) -> None:
+    """Persist EXPIRED on ACTIVE subs past expires_at. Called on read paths
+    so admin views/stats see truthful statuses. Commits — every call site
+    is write-free at that point."""
+    q = (update(UserSubscription)
+         .where(UserSubscription.status == "ACTIVE",
+                UserSubscription.expires_at.is_not(None),
+                UserSubscription.expires_at <= _now())
+         .values(status="EXPIRED"))
+    if user_id is not None:
+        q = q.where(UserSubscription.user_id == user_id)
+    db.execute(q)
+    db.commit()
+
+
 def active_subscription(db: Session, user: User,
                         applies_to: str) -> UserSubscription | None:
-    subs = db.scalars(
+    expire_stale(db, user.id)
+    return db.scalar(
         select(UserSubscription)
         .join(Plan, Plan.id == UserSubscription.plan_id)
         .where(UserSubscription.user_id == user.id,
                UserSubscription.status == "ACTIVE",
                Plan.applies_to == applies_to)
-        .order_by(UserSubscription.starts_at.desc())
-    ).all()
-    for s in subs:
-        _expire_if_needed(s)
-        if _v(s.status) == "ACTIVE":
-            return s
-    return None
+        .order_by(UserSubscription.starts_at.desc()))
 
 
 def effective_plan(db: Session, user: User, applies_to: str) -> tuple[Plan, UserSubscription | None]:
@@ -234,6 +244,16 @@ def grant_plan(db: Session, admin: User, user_id: int, plan_id: int,
     target = db.get(User, user_id)
     if plan is None or target is None:
         raise not_found("NOT_FOUND", "Unknown user or plan")
+    # one ACTIVE sub per scope — cancel any current one first
+    for old in db.scalars(
+            select(UserSubscription)
+            .join(Plan, Plan.id == UserSubscription.plan_id)
+            .where(UserSubscription.user_id == target.id,
+                   UserSubscription.status == "ACTIVE",
+                   Plan.applies_to == plan.applies_to)):
+        _expire_if_needed(old)
+        if _v(old.status) == "ACTIVE":
+            old.status = "CANCELLED"
     if days is not None:
         expires = _now() + timedelta(days=days)
     elif plan.duration_days:
@@ -266,6 +286,7 @@ def revoke_subscription(db: Session, admin: User, sub_id: int) -> dict:
 
 
 def stats(db: Session) -> dict:
+    expire_stale(db)
     paid = select(func.count(PaymentOrder.id),
                   func.coalesce(func.sum(PaymentOrder.amount_paise), 0)
                   ).where(PaymentOrder.status == "PAID")

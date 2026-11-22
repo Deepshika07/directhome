@@ -1,6 +1,26 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# known numeric entitlement keys — admin typos must 422 here, not 500 at a gate
+_NUMERIC_FEATURES = {"max_active_listings", "contact_reveals"}
+_BOOL_FEATURES = {"boost", "priority_support"}
+
+
+def _check_features(features: dict | None) -> dict | None:
+    if features is None:
+        return features
+    for key in _NUMERIC_FEATURES:
+        v = features.get(key)
+        if v is not None and (not isinstance(v, int) or isinstance(v, bool)
+                              or v < 0):
+            raise ValueError(
+                f"features.{key} must be a non-negative integer or null")
+    for key in _BOOL_FEATURES:
+        v = features.get(key)
+        if v is not None and not isinstance(v, bool):
+            raise ValueError(f"features.{key} must be true/false")
+    return features
 
 
 class PlanIn(BaseModel):
@@ -14,6 +34,8 @@ class PlanIn(BaseModel):
     is_active: bool = True
     sort_order: int = 0
 
+    _f = field_validator("features")(_check_features)
+
 
 class PlanUpdate(BaseModel):
     name: str | None = None
@@ -23,6 +45,8 @@ class PlanUpdate(BaseModel):
     features: dict | None = None
     is_active: bool | None = None
     sort_order: int | None = None
+
+    _f = field_validator("features")(_check_features)
 
 
 class PlanOut(BaseModel):

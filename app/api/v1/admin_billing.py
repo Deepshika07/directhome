@@ -94,6 +94,7 @@ def subscriptions(status: str | None = None, plan_id: int | None = None,
                   page: PageParams = Depends(),
                   admin: User = Depends(require_admin),
                   db: Session = Depends(get_db)):
+    svc.expire_stale(db)
     q = select(UserSubscription).join(Plan, Plan.id == UserSubscription.plan_id)
     if status:
         q = q.where(UserSubscription.status == status.upper())
