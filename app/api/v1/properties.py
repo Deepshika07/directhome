@@ -58,6 +58,7 @@ def search_properties(
     max_area: int | None = None,
     available_from: date | None = None,
     owner_verified: bool | None = None,
+    verified_only: bool | None = Query(default=None, description="only document-verified owners (verification_level >= 2)"),
     q: str | None = Query(default=None, description="title search"),
     sort: str = Query(default="newest", description="newest|price_asc|price_desc|trust_score"),
     page_params: PageParams = Depends(),
@@ -75,7 +76,8 @@ def search_properties(
         "min_price": min_price, "max_price": max_price,
         "min_area": min_area, "max_area": max_area,
         "available_from": available_from,
-        "owner_verified": owner_verified, "q": q, "sort": sort,
+        "owner_verified": owner_verified, "verified_only": verified_only,
+        "q": q, "sort": sort,
     }
     rows, total = svc.search(db, filters, page_params.page, page_params.limit)
     return ok(

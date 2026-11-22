@@ -27,6 +27,18 @@ from app.models.antifraud import (
     FraudConfig,
     UserRiskEvent,
 )
+from app.models.kyc import (
+    ConsentRecord,
+    KycCheck,
+    KycDocument,
+    KycDocumentType,
+    KycProfile,
+    KycRejectionReason,
+    KycReview,
+    KycStatusHistory,
+    PropertyOwnershipClaim,
+    SellerClaimType,
+)
 
 __all__ = [
     "Base",
@@ -57,4 +69,14 @@ __all__ = [
     "DuplicateMatch",
     "FraudConfig",
     "UserRiskEvent",
+    "ConsentRecord",
+    "KycCheck",
+    "KycDocument",
+    "KycDocumentType",
+    "KycProfile",
+    "KycRejectionReason",
+    "KycReview",
+    "KycStatusHistory",
+    "PropertyOwnershipClaim",
+    "SellerClaimType",
 ]

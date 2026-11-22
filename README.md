@@ -31,10 +31,26 @@ Current local setup uses user `postgres` / password `root`. (Note: there is no
 All app env vars use the `DIRECTHOME_` prefix so a globally-exported
 `DATABASE_URL` from other projects cannot override them.
 
+### KYC / verification env vars
+
+| Var | Purpose |
+|-----|---------|
+| `DIRECTHOME_KYC_ENC_KEY` | Base64 32-byte AES-GCM key encrypting PAN + document blobs. Generate: `openssl rand -base64 32`. **Required in production** — unset falls back to a key derived from `SECRET_KEY` (dev only). Rotating it without re-encrypting breaks reads. |
+| `DIRECTHOME_KYC_HMAC_KEY` | Secret pepper for `pan_hash` dedup. Unset → derived from `SECRET_KEY`. Rotating it orphans existing hashes (duplicates stop matching). |
+| `DIRECTHOME_KYC_STORAGE_DIR` | Root for encrypted document blobs (default `./var/kyc-docs`, gitignored). In production mount a persistent volume — blobs are AES-GCM ciphertext on disk. Swap to an S3/Lightsail bucket later by implementing `DocStorage` in `app/services/storage.py` — no caller changes. |
+| `DIRECTHOME_KYC_MAX_DOC_MB` | Per-document upload cap (default 8). |
+| `DIRECTHOME_KYC_NOTICE_VERSION` | Privacy-notice version recorded in `consent_records` (default `1.0`). Bump when copy changes. |
+| `DIRECTHOME_KYC_GRIEVANCE_EMAIL` | DPDP grievance contact surfaced in `/kyc/meta`. |
+
+Verification provider (`app/services/providers/kyc_provider.py`): Phase 1 uses `MockProvider` — PAN checks are simulated, reviewers approve manually. A real vendor (Digio/HyperVerge/IDfy…) implements the same `KycProvider` interface; select it in `get_provider()`. DigiLocker endpoints exist as stubs returning `supported: false`.
+
+Operational notes: run migrations before first boot (`alembic upgrade head` seeds claim types, doc types, rejection reasons, `KYC_REVIEWER` role, `kyc.*` fraud-config). Grant reviewers via `user_roles` → `KYC_REVIEWER`. Staff document views are audit-logged; PAN is masked in every API response.
+
 ## Run migrations
 
-Creates all 21 tables + seeds lookup data (roles, property types, room
-configurations, amenities, document types):
+Creates all 31 tables + seeds lookup data (roles incl. KYC_REVIEWER, property
+types, room configurations, amenities, document types, KYC claim/doc/reason
+taxonomies, fraud-config weights):
 
 ```bash
 alembic upgrade head
@@ -62,7 +78,9 @@ See `API.md` for the full endpoint reference (for the UI developer).
 ## Test
 
 ```bash
-python tests/smoke_test.py   # runs the full workflow end-to-end (29 checks)
+python tests/smoke_test.py    # end-to-end workflow (needs a fresh/empty dev DB)
+python tests/test_kyc.py      # KYC identity + ownership verification (39 checks)
+python tests/test_antifraud.py # anti-broker engine (33 checks)
 ```
 
 ## Making schema changes
@@ -74,7 +92,7 @@ alembic revision --autogenerate -m "describe change"
 alembic upgrade head
 ```
 
-## Schema overview (21 tables)
+## Schema overview (31 tables)
 
 | Group | Tables |
 |-------|--------|
@@ -83,6 +101,8 @@ alembic upgrade head
 | Property core | `properties`, `property_locations`, `property_media`, `property_amenities` |
 | Verification & lifecycle | `verification_documents`, `property_verifications`, `property_status_history`, `property_availability_history` |
 | Marketplace activity | `saved_properties`, `property_views`, `property_inquiries`, `property_reports` |
+| Anti-broker engine | `user_risk_events`, `fraud_config`, `duplicate_matches`, `appeals`, `admin_audit_logs` |
+| KYC & ownership | `kyc_profiles`, `kyc_checks`, `kyc_documents`, `property_ownership_claims`, `kyc_reviews`, `kyc_status_history`, `consent_records` + lookups `seller_claim_types`, `kyc_document_types`, `kyc_rejection_reasons` |
 
 Key conventions:
 

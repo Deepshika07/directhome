@@ -87,11 +87,12 @@ Base URL: `http://localhost:8000/api/v1` · Interactive docs: `http://localhost:
 | `min_area` / `max_area` | int sqft | Carpet or plot area |
 | `available_from` | YYYY-MM-DD | Available on/before this date |
 | `owner_verified` | true | Only verified-owner listings |
+| `verified_only` | true | Only document-verified owners (verification_level ≥ 2) |
 | `q` | string | Title search |
 | `sort` | newest\|price_asc\|price_desc\|trust_score | default `newest` |
 | `page` / `limit` | int | Pagination |
 
-Returns array of **cards**: `id, title, listing_type, property_type, room_configuration, bedrooms, bathrooms, furnishing, rent_amount, sale_price, area_sqft, locality, city, primary_image, trust_score, is_owner_verified, status, available_from, created_at`.
+Returns array of **cards**: `id, title, listing_type, property_type, room_configuration, bedrooms, bathrooms, furnishing, rent_amount, sale_price, area_sqft, locality, city, primary_image, trust_score, is_owner_verified, verification_level, status, available_from, created_at`. `verification_level`: 0 none · 1 identity KYC only · 2 ownership documents reviewed ("document-verified owner" badge).
 
 **GET /properties/{id}** — full detail; everything in the card plus `description, security_deposit, maintenance_amount, price_negotiable, carpet/built_up/plot_area_sqft, floor_number, total_floors, availability_status, last_verified_at, extra_attributes, location{…}, media[{media_type,url,thumbnail_url,is_primary}], amenities["Parking",…], owner{id,name,is_verified}`. Records a view (send optional `X-Session-Id` header for anonymous dedup). **Owner phone is never in this response.**
 
@@ -105,7 +106,7 @@ Returns array of **cards**: `id, title, listing_type, property_type, room_config
 | PUT | `/properties/{id}` | Edit (DRAFT/REJECTED/PAUSED/ACTIVE; ACTIVE → back to PENDING_REVIEW) |
 | DELETE | `/properties/{id}` | Delete — only while DRAFT or REJECTED |
 | GET | `/users/me/properties` | My listings, all statuses (dashboard) |
-| POST | `/properties/{id}/submit` | DRAFT/REJECTED → PENDING_REVIEW (server checks completeness) |
+| POST | `/properties/{id}/submit` | DRAFT/REJECTED → PENDING_REVIEW — requires identity KYC (L1), else `403 KYC_REQUIRED` |
 | POST | `/properties/{id}/pause` | ACTIVE → PAUSED |
 | POST | `/properties/{id}/activate` | PAUSED → ACTIVE |
 | POST | `/properties/{id}/mark-rented` | → RENTED |
@@ -197,6 +198,53 @@ Rules: `RENT|PG|SHARED` need `rent_amount`; `SALE` needs `sale_price` (enforced 
 
 **Risk engine** — `user_risk_events` store scored events (deduped). Score → status: ≥30 `UNDER_REVIEW`, ≥50 `TEMPORARILY_RESTRICTED`, ≥70 `SUSPENDED` — auto-escalate only; de-escalation and bans are manual admin actions. Rule scores/thresholds editable via `GET/POST /admin/fraud/config`.
 
+## KYC & ownership verification — Phase 1 (Bearer)
+
+Two separate verifications. **Identity KYC** (once per user) → `kyc_level` 1 → required to submit listings. **Ownership claim** (once per listing) → `verification_level` 2 → "document-verified owner" badge. Verified identity does NOT imply ownership; we never claim title verification.
+
+**Trust levels** — L0 browse/save/draft · L1 submit listings · L2 verified-owner badge · L3 (future) geo/site check. Existing sellers are grandfathered at L0 until their next submit/edit, which then requires KYC.
+
+**KYC profile statuses** — `NOT_STARTED → IN_PROGRESS → SUBMITTED → AUTO_VERIFIED|UNDER_REVIEW → APPROVED|REJECTED|NEEDS_MORE_INFO → SUBMITTED (resubmit) → EXPIRED`. Claim statuses: `SUBMITTED → UNDER_REVIEW → APPROVED|REJECTED|NEEDS_MORE_INFO → SUBMITTED`.
+
+### Seller flow
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/kyc/consent` | `{ purpose?: "KYC_IDENTITY" }` — records notice version, IP, UA. Required before PAN |
+| GET | `/kyc/me` | Full KYC state: `kyc_status`, `kyc_level`, `has_consent`, `profile{status, level, name_as_per_pan, pan_masked, aadhaar_last4, verified_at, rejection_reason, review_sla_hours}`, `documents[]` |
+| GET | `/kyc/meta` | `claim_types` (INDIVIDUAL_OWNER, CO_OWNER, POA_HOLDER, BUILDER_DEVELOPER, PG_OPERATOR + `required_doc_codes`, `requires_admin_review`), `document_types`, `rejection_reasons`, `notice_version`, `grievance_email`, badge copy |
+| POST | `/kyc/identity/pan` | `{ pan: "ABCDE1234F", name_as_per_pan }` → provider verify + dup-hash check. PAN stored AES-GCM-encrypted; only masked `ABCDE****F` ever returned |
+| POST | `/kyc/identity/digilocker/initiate` · GET `…/callback` | Stub — provider not configured yet (`supported: false`) |
+| POST | `/kyc/documents` | `{ doc_type_id, filename, mime, size_bytes }` → `{ document_id, upload_url }` (JPEG/PNG/WebP/PDF, ≤8MB) |
+| POST | `/kyc/documents/{id}/content` | Raw bytes body — server sniffs magic bytes vs declared MIME, sha256-dedups across accounts, encrypts to storage |
+| POST | `/kyc/submit` | Finalize → `AUTO_VERIFIED` (clean) or `UNDER_REVIEW` (flags/dup PAN) |
+
+### Ownership claim flow (requires L1)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/properties/{id}/ownership-claim` | `{ claim_type_id, owner_name_on_doc }` → claim + `name_match_score` vs KYC name |
+| POST | `/properties/{id}/ownership-claim/documents` | Same init shape as `/kyc/documents`, attached to the listing — doc types restricted to `applies_to ≠ USER` |
+| GET | `/properties/{id}/ownership-claim` | Claim status + docs (owner, or staff) |
+
+New uploads while a claim is `NEEDS_MORE_INFO` auto-resubmit it to `SUBMITTED`.
+
+### Reviewer / admin queue (KYC_REVIEWER or ADMIN)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/admin/kyc/queue` | `?status=&claim_type=&min_risk=&sla_breached=&page=&limit=` — mixed KYC_PROFILE + OWNERSHIP_CLAIM items, priority-sorted (SLA breach → risk → age) |
+| GET | `/admin/kyc/cases/{KYC_PROFILE\|OWNERSHIP_CLAIM}/{id}` | Case view: subject, checks, documents, linked accounts (same PAN/doc bytes), history, reviews, `requires_admin_review` |
+| POST | `/admin/kyc/cases/{type}/{id}/decision` | `{ decision: "APPROVE"\|"REJECT", reason_id?, notes? }` — REJECT needs `reason_id`. High-risk cases (risk ≥ `kyc.maker_checker_risk_threshold`, POA/builder claim types, name mismatch) → reviewer APPROVE becomes `RECOMMEND_APPROVE` pending `ADMIN_FINALIZE` |
+| POST | `/admin/kyc/cases/{type}/{id}/request-info` | `{ notes (required), reason_id? }` → `NEEDS_MORE_INFO` |
+| POST | `/admin/kyc/cases/{type}/{id}/escalate` | `{ notes? }` — flags for admin attention, stays in queue |
+| GET | `/admin/kyc/documents/{id}/url` | Returns a content path — access logged (`KYC_DOC_ACCESS`) |
+| GET | `/admin/kyc/documents/{id}/content` | Decrypted doc bytes — view logged (`KYC_DOC_VIEW`) |
+
+Reviewers cannot act on their own cases. Approve side-effects: profile → `kyc_level=1`, `users.kyc_status=VERIFIED`; claim → `verification_level=2`, `is_owner_verified=true`. Fraud-flavored rejections (tampered doc, address mismatch) create `user_risk_events` via the existing engine (`SUSPECTED_TAMPERED_DOC` +70, `DUPLICATE_PAN_HASH` +60, `KYC_NAME_MISMATCH` +25, `KYC_ADDRESS_MISMATCH` +20 — editable in `fraud_config`).
+
+Security: PAN/Aadhaar never logged; PAN masked for reviewers (`unmask` is not exposed yet); every staff doc access is audit-logged; consent + full status history retained per DPDP purpose-limitation.
+
 ## Admin — fraud & moderation (Bearer + ADMIN)
 
 | Method | Path | Purpose |
@@ -220,7 +268,7 @@ Rules: `RENT|PG|SHARED` need `rent_amount`; `SALE` needs `sale_price` (enforced 
 
 ## Error codes
 
-`VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, PROPERTY_NOT_FOUND, PHONE_TAKEN, EMAIL_TAKEN, LISTING_INCOMPLETE, INVALID_STATUS_TRANSITION, NOT_EDITABLE, CANNOT_DELETE, ALREADY_SAVED, NOT_SAVED, OWN_LISTING, INVALID_CONTACT_METHOD, INVALID_REASON, INVALID_DOC_TYPE, ALREADY_REVIEWED, INQUIRY_NOT_FOUND, REPORT_NOT_FOUND, DOCUMENT_NOT_FOUND, USER_NOT_FOUND, ROLE_MISSING`
+`VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, PROPERTY_NOT_FOUND, PHONE_TAKEN, EMAIL_TAKEN, LISTING_INCOMPLETE, INVALID_STATUS_TRANSITION, NOT_EDITABLE, CANNOT_DELETE, ALREADY_SAVED, NOT_SAVED, OWN_LISTING, INVALID_CONTACT_METHOD, INVALID_REASON, INVALID_DOC_TYPE, ALREADY_REVIEWED, INQUIRY_NOT_FOUND, REPORT_NOT_FOUND, DOCUMENT_NOT_FOUND, USER_NOT_FOUND, ROLE_MISSING, KYC_REQUIRED, CONSENT_REQUIRED, PAN_FORMAT, PAN_VERIFY_FAILED, KYC_INCOMPLETE, KYC_LOCKED, BAD_MIME, FILE_TOO_LARGE, BAD_FILE_TYPE, MIME_MISMATCH, BAD_DOC_TYPE, BAD_CLAIM_TYPE, CLAIM_EXISTS, CLAIM_NOT_FOUND, INVALID_KYC_TRANSITION, INVALID_CLAIM_TRANSITION, REASON_REQUIRED, NOTE_REQUIRED, BAD_DECISION, BAD_SUBJECT_TYPE, CASE_NOT_FOUND, DOC_NOT_FOUND`
 
 ## Demo data
 

@@ -94,6 +94,12 @@ class Property(Base, TimestampMixin):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     address_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    verification_level: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
+    ownership_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     owner: Mapped["User"] = relationship(
         back_populates="properties", foreign_keys=[owner_id]
@@ -113,6 +119,9 @@ class Property(Base, TimestampMixin):
         order_by="PropertyMedia.display_order",
     )
     amenities: Mapped[list["PropertyAmenity"]] = relationship(
+        back_populates="property", cascade="all, delete-orphan"
+    )
+    ownership_claims: Mapped[list["PropertyOwnershipClaim"]] = relationship(
         back_populates="property", cascade="all, delete-orphan"
     )
 

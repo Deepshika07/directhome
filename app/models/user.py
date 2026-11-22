@@ -57,6 +57,9 @@ class User(Base, TimestampMixin):
         nullable=False,
         server_default=KycStatus.NOT_SUBMITTED.value,
     )
+    kyc_level: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
@@ -89,6 +92,9 @@ class User(Base, TimestampMixin):
     )
     properties: Mapped[list["Property"]] = relationship(
         back_populates="owner", foreign_keys="Property.owner_id"
+    )
+    kyc_profile: Mapped["KycProfile | None"] = relationship(
+        back_populates="user", foreign_keys="KycProfile.user_id"
     )
 
     __table_args__ = (

@@ -74,6 +74,7 @@ def require_roles(*codes: str):
 
 require_seller = require_roles("SELLER", "ADMIN")
 require_admin = require_roles("ADMIN")
+require_kyc_reviewer = require_roles("KYC_REVIEWER", "ADMIN")
 
 PUBLISH_BLOCKING = {"TEMPORARILY_RESTRICTED", "SUSPENDED", "PERMANENTLY_BANNED"}
 

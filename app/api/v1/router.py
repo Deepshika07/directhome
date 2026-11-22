@@ -3,9 +3,11 @@ from fastapi import APIRouter
 from app.api.v1 import (
     admin,
     admin_fraud,
+    admin_kyc,
     auth,
     documents,
     inquiries,
+    kyc,
     meta,
     properties,
     saved,
@@ -20,5 +22,7 @@ api_router.include_router(inquiries.router)
 api_router.include_router(documents.router)
 api_router.include_router(meta.router)
 api_router.include_router(verification.router)
+api_router.include_router(kyc.router)
 api_router.include_router(admin.router)
 api_router.include_router(admin_fraud.router)
+api_router.include_router(admin_kyc.router)

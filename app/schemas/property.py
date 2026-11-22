@@ -126,6 +126,7 @@ class PropertyCard(BaseModel):
     primary_image: str | None
     trust_score: int
     is_owner_verified: bool
+    verification_level: int = 0
     status: str
     available_from: date | None
     created_at: datetime

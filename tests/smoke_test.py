@@ -8,6 +8,7 @@ reveal) -> report -> availability -> pause/activate -> negative checks.
 NOTE: writes demo data into the configured database (local dev only).
 """
 
+import random
 import sys
 from pathlib import Path
 
@@ -76,6 +77,15 @@ check("seller accepts terms", r.status_code == 200, r.text[:200])
 r = client.post("/api/v1/users/me/verification/owner-declaration",
                 headers=auth(seller_token), json={"role": "OWNER"})
 check("seller declares ownership", r.status_code == 200, r.text[:200])
+
+# new-style identity KYC — required (L1) before listing submission
+client.post("/api/v1/kyc/consent", headers=auth(seller_token), json={})
+r = client.post("/api/v1/kyc/identity/pan", headers=auth(seller_token),
+                json={"pan": f"SMKTE{random.randint(1000, 9999)}Z",
+                      "name_as_per_pan": "Demo Seller"})
+r = client.post("/api/v1/kyc/submit", headers=auth(seller_token))
+check("seller completes identity KYC (L1)", r.status_code == 200
+      and r.json()["data"]["kyc_level"] == 1, r.text[:200])
 
 # ---------- 2. KYC ----------
 r = client.get("/api/v1/meta/filters")

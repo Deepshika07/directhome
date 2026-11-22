@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.errors import bad_request, forbidden, not_found
+from app.core.errors import ApiError, bad_request, forbidden, not_found
 from app.models import (
     Amenity,
     Property,
@@ -157,8 +157,11 @@ def update_property(db: Session, prop: Property, payload: PropertyUpdate) -> Pro
         _apply_media(prop, payload.media)
     if "amenity_ids" in data and payload.amenity_ids is not None:
         _apply_amenities(prop, payload.amenity_ids)
-    # edits on a live listing send it back for review
+    # edits on a live listing send it back for review — that counts as a
+    # submission, so L1 identity KYC is required (grandfathered accounts
+    # trigger the gate here)
     if prop.status == "ACTIVE":
+        _require_l1(db.get(User, prop.owner_id))
         _record_status(db, prop, "ACTIVE", "PENDING_REVIEW", prop.owner_id,
                        "Edited after publish")
         prop.status = "PENDING_REVIEW"
@@ -200,6 +203,15 @@ def _record_status(db, prop, old, new, changed_by, reason=None):
     )
 
 
+def _require_l1(user: User | None) -> None:
+    """Hard service-layer gate: identity KYC (L1) before submitting a listing."""
+    if user is None or (user.kyc_level or 0) < 1:
+        raise ApiError(
+            403, "KYC_REQUIRED",
+            "Complete identity verification (KYC) before submitting a listing",
+        )
+
+
 def transition(db: Session, prop: Property, action: str, actor: User,
                reason: str | None = None) -> Property:
     if action not in TRANSITIONS:
@@ -211,6 +223,7 @@ def transition(db: Session, prop: Property, action: str, actor: User,
             f"Cannot {action} a listing in status {prop.status}",
         )
     if new_status == "PENDING_REVIEW":
+        _require_l1(db.get(User, prop.owner_id))
         _check_publishable(prop)
     _record_status(db, prop, prop.status, new_status, actor.id, reason)
     prop.status = new_status
@@ -288,6 +301,8 @@ def search(db: Session, f: dict, page: int, limit: int):
         )
     if f.get("owner_verified"):
         q = q.where(Property.is_owner_verified.is_(True))
+    if f.get("verified_only"):
+        q = q.where(Property.verification_level >= 2)
     if f.get("q"):
         q = q.where(Property.title.ilike(f"%{f['q']}%"))
 
@@ -347,6 +362,7 @@ def card_from(prop: Property) -> PropertyCard:
         primary_image=_primary_image(prop),
         trust_score=prop.trust_score or 0,
         is_owner_verified=prop.is_owner_verified,
+        verification_level=prop.verification_level or 0,
         status=_v(prop.status),
         available_from=prop.available_from,
         created_at=prop.created_at,

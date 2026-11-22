@@ -63,6 +63,15 @@ def accept_requirements(token):
                 headers=auth(token), json={"role": "OWNER"})
 
 
+def complete_kyc(token, pan, name="AF Seller"):
+    """Listing submission now requires identity KYC (L1)."""
+    client.post("/api/v1/kyc/consent", headers=auth(token), json={})
+    client.post("/api/v1/kyc/identity/pan", headers=auth(token),
+                json={"pan": pan, "name_as_per_pan": name})
+    r = client.post("/api/v1/kyc/submit", headers=auth(token))
+    assert r.json()["data"]["profile"]["status"] == "AUTO_VERIFIED", r.text
+
+
 # address is unique per run → duplicate-detection assertions stay deterministic
 ADDR = {"address_line1": "12 Green Park", "locality": f"TestLoc{RUN_ID}",
         "city": "Bengaluru", "state": "Karnataka", "pincode": "560038"}
@@ -115,6 +124,7 @@ r = client.post("/api/v1/users/me/verification/accept-terms",
 check("wrong terms version rejected", r.status_code == 400)
 
 accept_requirements(seller1)
+complete_kyc(seller1, f"AFONE{RUN_ID % 9000 + 1000}Z")
 
 r = client.get("/api/v1/users/me/verification/status", headers=auth(seller1))
 check("verification status shows requirements met",
@@ -177,6 +187,7 @@ check("admin unflags listing → ACTIVE",
 
 # ---------- 5. cross-account duplicate detection ----------
 accept_requirements(seller2)
+complete_kyc(seller2, f"AFTWO{RUN_ID % 9000 + 1000}Y")
 dup_listing = {**LISTING, "title": "Nice 2BHK Indiranagar flat"}
 r = client.post("/api/v1/properties", headers=auth(seller2), json=dup_listing)
 prop2 = r.json()["data"]["id"]
