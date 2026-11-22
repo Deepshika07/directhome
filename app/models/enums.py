@@ -187,6 +187,25 @@ class KycSubjectType(str, enum.Enum):
     KYC_DOCUMENT = "KYC_DOCUMENT"
 
 
+class SubscriptionStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+
+
+class PaymentStatus(str, enum.Enum):
+    CREATED = "CREATED"
+    PAID = "PAID"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
+
+
+class BillingSource(str, enum.Enum):
+    PAYMENT = "PAYMENT"
+    ADMIN_GRANT = "ADMIN_GRANT"
+    TRIAL = "TRIAL"
+
+
 class DuplicateMatchStatus(str, enum.Enum):
     UNREVIEWED = "UNREVIEWED"
     CONFIRMED = "CONFIRMED"

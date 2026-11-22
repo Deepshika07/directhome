@@ -325,6 +325,8 @@ def create_inquiry(
         raise bad_request("OWN_LISTING", "You cannot inquire about your own listing")
     if payload.contact_method not in {"PHONE", "WHATSAPP", "EMAIL", "PLATFORM"}:
         raise bad_request("INVALID_CONTACT_METHOD", "Unknown contact_method")
+    from app.services import billing_service
+    billing_service.check_contact_reveal(db, user)
     inquiry = PropertyInquiry(
         property_id=prop.id, buyer_id=user.id, owner_id=prop.owner_id,
         message=payload.message, contact_method=payload.contact_method,

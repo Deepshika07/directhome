@@ -283,10 +283,18 @@ check("ownership-mismatch reject scores +50",
 r = client.post(f"/api/v1/properties/{prop2}/reports", headers=auth(buyer1),
                 json={"reason": "OTHER", "description": "weak claim"})
 rep_id = None
-r = client.get("/api/v1/admin/fraud/reported-properties?status=OPEN",
-               headers=auth(admin))
-rep_id = next(x["id"] for x in r.json()["data"]
-              if x["property_id"] == prop2)
+# reported-properties sorts oldest-first — scan pages (dev DB is stateful)
+_page = 1
+while rep_id is None:
+    r = client.get(
+        f"/api/v1/admin/fraud/reported-properties?status=OPEN"
+        f"&page={_page}&limit=100", headers=auth(admin))
+    rep_id = next((x["id"] for x in r.json()["data"]
+                   if x["property_id"] == prop2), None)
+    if r.json()["meta"]["total"] <= _page * 100:
+        break
+    _page += 1
+assert rep_id is not None, "report on prop2 not found in OPEN reports"
 r = client.post(f"/api/v1/admin/reports/{rep_id}/dismiss",
                 headers=auth(admin), json={"note": "invalid report"})
 check("admin dismisses report", r.status_code == 200)

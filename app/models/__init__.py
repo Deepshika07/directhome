@@ -39,6 +39,7 @@ from app.models.kyc import (
     PropertyOwnershipClaim,
     SellerClaimType,
 )
+from app.models.billing import PaymentOrder, Plan, UserSubscription
 
 __all__ = [
     "Base",
@@ -79,4 +80,7 @@ __all__ = [
     "KycStatusHistory",
     "PropertyOwnershipClaim",
     "SellerClaimType",
+    "PaymentOrder",
+    "Plan",
+    "UserSubscription",
 ]

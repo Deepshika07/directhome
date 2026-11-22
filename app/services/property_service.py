@@ -224,6 +224,8 @@ def transition(db: Session, prop: Property, action: str, actor: User,
         )
     if new_status == "PENDING_REVIEW":
         _require_l1(db.get(User, prop.owner_id))
+        from app.services import billing_service
+        billing_service.check_listing_slot(db, db.get(User, prop.owner_id))
         _check_publishable(prop)
     _record_status(db, prop, prop.status, new_status, actor.id, reason)
     prop.status = new_status

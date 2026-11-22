@@ -266,9 +266,44 @@ Security: PAN/Aadhaar never logged; PAN masked for reviewers (`unmask` is not ex
 
 ---
 
+## Billing & subscriptions — Phase 1 (mock provider)
+
+Entitlements live in `plans.features` JSONB — admins create/edit plans freely, no deploys. Known feature keys: `max_active_listings` (SELLER — concurrent PENDING_REVIEW+ACTIVE+PAUSED+FLAGGED listings), `contact_reveals` (BUYER — inquiries per window). `null` = unlimited. Seeded `FREE_SELLER`/`FREE_BUYER` are unlimited (mirrors pre-billing behavior) until an admin tightens them.
+
+**Gate points:** `POST /properties/{id}/submit` checks listing slots; `POST /properties/{id}/inquiries` checks contact quota. Both return `403 LIMIT_REACHED` when exhausted — show the plan catalogue to upgrade. No plan configured at all → `403 PLAN_REQUIRED`.
+
+**Subscription scope:** a user's effective plan = their ACTIVE subscription's plan for that scope, else the FREE plan. Usage window = subscription window (free-plan users count all-time). Plan edits apply **live** — existing subscribers see new limits immediately (no snapshots yet).
+
+### User-facing
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/billing/plans?applies_to=SELLER\|BUYER` | Public catalogue — drives the pricing page |
+| GET | `/billing/me` | `{seller:{plan_code,subscribed,limit,used,expires_at}, buyer:{…}}` — remaining quota for the UI |
+| POST | `/billing/orders` | `{ plan_id }` → `CREATED` + `checkout{provider,order_ref,amount_paise,checkout_url}` — free plans short-circuit to `PAID` + `subscription_id` |
+| POST | `/billing/orders/{id}/confirm` | `{ signature? }` — mock: pass `"fail"` to simulate failure. Paid → activates subscription (replaces any ACTIVE sub for the same scope) |
+| GET | `/billing/orders` | My order history |
+
+### Admin (Bearer + ADMIN)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/admin/billing/plans` | All plans incl. inactive |
+| POST | `/admin/billing/plans` | `{ code (A-Z0-9_), name, applies_to, price_paise, duration_days?, features{}, is_active?, sort_order? }` |
+| PUT | `/admin/billing/plans/{id}` | Partial update — price/limits/description apply live to all users on that plan |
+| DELETE | `/admin/billing/plans/{id}` | Soft-delete (deactivate) if subscribed; hard-delete if unused |
+| GET | `/admin/billing/subscriptions?status=&plan_id=&page=` | All subscriptions |
+| POST | `/admin/billing/grants` | `{ user_id, plan_id, days? }` — comp a user (support/testing); `source=ADMIN_GRANT` |
+| POST | `/admin/billing/subscriptions/{id}/revoke` | → `CANCELLED` |
+| GET | `/admin/billing/stats` | `paid_orders`, `revenue_paise`, `active_subscriptions_by_plan`, `expiring_next_7_days` |
+
+**Razorpay later:** provider interface in `app/services/providers/billing_provider.py` (`create_order`/`verify_payment`). Real integration = implement `RazorpayProvider` (order create via API, signature verify, webhook for `payment.captured`) + env keys (`key_id`, `key_secret`, webhook secret) — business logic unchanged.
+
+---
+
 ## Error codes
 
-`VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, PROPERTY_NOT_FOUND, PHONE_TAKEN, EMAIL_TAKEN, LISTING_INCOMPLETE, INVALID_STATUS_TRANSITION, NOT_EDITABLE, CANNOT_DELETE, ALREADY_SAVED, NOT_SAVED, OWN_LISTING, INVALID_CONTACT_METHOD, INVALID_REASON, INVALID_DOC_TYPE, ALREADY_REVIEWED, INQUIRY_NOT_FOUND, REPORT_NOT_FOUND, DOCUMENT_NOT_FOUND, USER_NOT_FOUND, ROLE_MISSING, KYC_REQUIRED, CONSENT_REQUIRED, PAN_FORMAT, PAN_VERIFY_FAILED, KYC_INCOMPLETE, KYC_LOCKED, BAD_MIME, FILE_TOO_LARGE, BAD_FILE_TYPE, MIME_MISMATCH, BAD_DOC_TYPE, BAD_CLAIM_TYPE, CLAIM_EXISTS, CLAIM_NOT_FOUND, INVALID_KYC_TRANSITION, INVALID_CLAIM_TRANSITION, REASON_REQUIRED, NOTE_REQUIRED, BAD_DECISION, BAD_SUBJECT_TYPE, CASE_NOT_FOUND, DOC_NOT_FOUND`
+`VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, PROPERTY_NOT_FOUND, PHONE_TAKEN, EMAIL_TAKEN, LISTING_INCOMPLETE, INVALID_STATUS_TRANSITION, NOT_EDITABLE, CANNOT_DELETE, ALREADY_SAVED, NOT_SAVED, OWN_LISTING, INVALID_CONTACT_METHOD, INVALID_REASON, INVALID_DOC_TYPE, ALREADY_REVIEWED, INQUIRY_NOT_FOUND, REPORT_NOT_FOUND, DOCUMENT_NOT_FOUND, USER_NOT_FOUND, ROLE_MISSING, KYC_REQUIRED, CONSENT_REQUIRED, PAN_FORMAT, PAN_VERIFY_FAILED, KYC_INCOMPLETE, KYC_LOCKED, BAD_MIME, FILE_TOO_LARGE, BAD_FILE_TYPE, MIME_MISMATCH, BAD_DOC_TYPE, BAD_CLAIM_TYPE, CLAIM_EXISTS, CLAIM_NOT_FOUND, INVALID_KYC_TRANSITION, INVALID_CLAIM_TRANSITION, REASON_REQUIRED, NOTE_REQUIRED, BAD_DECISION, BAD_SUBJECT_TYPE, CASE_NOT_FOUND, DOC_NOT_FOUND, PLAN_REQUIRED, LIMIT_REACHED, PLAN_NOT_FOUND, PLAN_CODE_TAKEN, ORDER_NOT_FOUND, ORDER_CLOSED, PAYMENT_FAILED, SUB_NOT_FOUND, SUB_CLOSED`
 
 ## Demo data
 
