@@ -238,7 +238,10 @@ check("admin tightens FREE_BUYER to 2 contacts",
 r = client.post(f"/api/v1/admin/properties/{p1}/approve", headers=auth(admin))
 check("p1 approved → ACTIVE", r.json()["data"]["status"] == "ACTIVE")
 
-# second owner: s2 KYC + listing p3 + approve
+# p2 = same owner s, different property — must consume a SEPARATE credit
+client.post(f"/api/v1/admin/properties/{p2}/approve", headers=auth(admin))
+
+# second owner: s2 KYC + listing p3 + approve (for the limit + paid checks)
 accept_requirements(s2)
 complete_kyc(s2, "BILLB", "Bill Seller2")
 r = client.post("/api/v1/properties", headers=auth(s2), json=LISTING2)
@@ -247,64 +250,54 @@ r = client.post(f"/api/v1/properties/{p3}/submit", headers=auth(s2))
 check("s2 listing submits (1-slot plan)", r.status_code == 200, r.text[:200])
 client.post(f"/api/v1/admin/properties/{p3}/approve", headers=auth(admin))
 
-# third owner: s3 for the limit-exceeded attempt + paid-window check
-s3_id, s3, _ = register("Bill Seller3")
-accept_requirements(s3)
-complete_kyc(s3, "BILLC", "Bill Seller3")
-r = client.post("/api/v1/properties", headers=auth(s3), json={
-    **LISTING, "title": "Third flat",
-    "location": {**LISTING["location"], "locality": f"ThirdLoc{RUN_ID}",
-                 "city": "Delhi"},
-    "media": [{"media_type": "IMAGE", "url": "https://z.com/c.jpg",
-               "is_primary": True}]})
-p4 = r.json()["data"]["id"]
-client.post(f"/api/v1/properties/{p4}/submit", headers=auth(s3))
-client.post(f"/api/v1/admin/properties/{p4}/approve", headers=auth(admin))
-
 r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
-                json={"message": "hi owner1", "contact_method": "PHONE"})
-check("inquiry #1: first distinct owner", r.status_code == 201
+                json={"message": "hi p1", "contact_method": "PHONE"})
+check("inquiry #1 on p1 → credit 1", r.status_code == 201
       and r.json()["data"]["owner_contact"]["phone"], r.text[:160])
 
 r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
-                json={"message": "revisit", "contact_method": "PHONE"})
-check("repeat inquiry to same owner is FREE (no credit used)",
+                json={"message": "revisit p1", "contact_method": "PHONE"})
+check("repeat on same property is FREE", r.status_code == 201, r.text[:200])
+
+r = client.get("/api/v1/billing/me", headers=auth(b))
+check("counter = 1 after repeat on same property",
+      r.json()["data"]["buyer"]["used"] == 1, r.text[:200])
+
+r = client.post(f"/api/v1/properties/{p2}/inquiries", headers=auth(b),
+                json={"message": "hi p2", "contact_method": "PHONE"})
+check("same owner, DIFFERENT property → credit 2 used",
       r.status_code == 201, r.text[:200])
 
 r = client.get("/api/v1/billing/me", headers=auth(b))
-check("distinct-owner counter = 1 after repeat",
-      r.json()["data"]["buyer"]["used"] == 1, r.text[:200])
+check("counter = 2 (two properties, same owner)",
+      r.json()["data"]["buyer"]["used"] == 2, r.text[:200])
 
 r = client.post(f"/api/v1/properties/{p3}/inquiries", headers=auth(b),
-                json={"message": "hi owner2", "contact_method": "PHONE"})
-check("inquiry #2: second distinct owner", r.status_code == 201)
-
-r = client.post(f"/api/v1/properties/{p4}/inquiries", headers=auth(b),
-                json={"message": "hi owner3", "contact_method": "PHONE"})
-check("3rd distinct owner → LIMIT_REACHED",
+                json={"message": "hi p3", "contact_method": "PHONE"})
+check("3rd property → LIMIT_REACHED",
       r.status_code == 403 and r.json()["error"]["code"] == "LIMIT_REACHED",
       r.text[:200])
 
 r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
-                json={"message": "revisit again", "contact_method": "PHONE"})
-check("repeat contact still allowed AT the limit",
+                json={"message": "revisit p1 again", "contact_method": "PHONE"})
+check("repeat on p1 still free AT the limit",
       r.status_code == 201, r.text[:200])
 
-# buyer upgrades → paid window resets the distinct-owner counter
+# buyer upgrades → paid window resets the counter
 r = client.post("/api/v1/billing/orders", headers=auth(b),
                 json={"plan_id": basic_buyer})
 order_b = r.json()["data"]["order_id"]
 client.post(f"/api/v1/billing/orders/{order_b}/confirm",
             headers=auth(b), json={})
 
-r = client.post(f"/api/v1/properties/{p4}/inquiries", headers=auth(b),
+r = client.post(f"/api/v1/properties/{p3}/inquiries", headers=auth(b),
                 json={"message": "now paid", "contact_method": "PHONE"})
-check("paid window: previously-blocked owner now allowed",
+check("paid window: previously-blocked property now allowed",
       r.status_code == 201, r.text[:200])
 
-r = client.post(f"/api/v1/properties/{p4}/inquiries", headers=auth(b),
+r = client.post(f"/api/v1/properties/{p3}/inquiries", headers=auth(b),
                 json={"message": "paid revisit", "contact_method": "PHONE"})
-check("paid repeat also free", r.status_code == 201)
+check("paid repeat on p3 also free", r.status_code == 201)
 
 r = client.get("/api/v1/billing/me", headers=auth(b))
 check("paid window used=1 (repeat doesn't count)",

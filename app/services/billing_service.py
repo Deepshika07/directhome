@@ -4,8 +4,8 @@ Entitlement model: a user's effective plan = their ACTIVE subscription's
 plan, else the FREE_* plan for that role. Entitlements live in
 plan.features JSONB — known keys:
     max_active_listings  (seller) int|null  concurrent live listings
-    contact_reveals      (buyer)  int|null  distinct owners per window —
-                                repeat reveals to a contacted owner are free
+    contact_reveals      (buyer)  int|null  distinct properties per window —
+                                repeat reveals on a contacted listing are free
 null = unlimited. Usage window = subscription window; free-plan users count
 all-time. Everything is checked in the service layer (like the L1 gate).
 """
@@ -102,28 +102,29 @@ def listings_used(db: Session, user: User) -> int:
 
 def contact_reveals_used(db: Session, user: User,
                          since: datetime | None) -> int:
-    """Distinct owners contacted — a repeat reveal to the same owner is
-    free and never consumes another credit."""
-    q = select(func.count(PropertyInquiry.owner_id.distinct())).where(
+    """Distinct properties contacted — a repeat reveal on the same listing
+    is free and never consumes another credit."""
+    q = select(func.count(PropertyInquiry.property_id.distinct())).where(
         PropertyInquiry.buyer_id == user.id)
     if since:
         q = q.where(PropertyInquiry.created_at >= since)
     return db.scalar(q) or 0
 
 
-def _already_revealed(db: Session, user: User, owner_id: int) -> bool:
-    """Buyer has a prior inquiry with this owner (any window) — re-reveals
-    are free."""
+def _already_revealed(db: Session, user: User, property_id: int) -> bool:
+    """Buyer has a prior inquiry on THIS property (any window) — re-reveals
+    on the same listing are free."""
     return db.scalar(
         select(PropertyInquiry.id).where(
             PropertyInquiry.buyer_id == user.id,
-            PropertyInquiry.owner_id == owner_id).limit(1)) is not None
+            PropertyInquiry.property_id == property_id).limit(1)) is not None
 
 
-def check_contact_reveal(db: Session, user: User, owner_id: int) -> None:
-    """Gate: revealing an owner's contact. Free if this owner was already
-    revealed; else raises LIMIT_REACHED when the window quota is spent."""
-    if _already_revealed(db, user, owner_id):
+def check_contact_reveal(db: Session, user: User, property_id: int) -> None:
+    """Gate: revealing the contact on a listing. Free if this property was
+    already revealed; else raises LIMIT_REACHED when the window quota is
+    spent. Same owner + different property consumes another credit."""
+    if _already_revealed(db, user, property_id):
         return
     plan, sub = effective_plan(db, user, "BUYER")
     limit = plan.features.get("contact_reveals")
