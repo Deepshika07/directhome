@@ -4,7 +4,8 @@ Entitlement model: a user's effective plan = their ACTIVE subscription's
 plan, else the FREE_* plan for that role. Entitlements live in
 plan.features JSONB — known keys:
     max_active_listings  (seller) int|null  concurrent live listings
-    contact_reveals      (buyer)  int|null  inquiries per window
+    contact_reveals      (buyer)  int|null  distinct owners per window —
+                                repeat reveals to a contacted owner are free
 null = unlimited. Usage window = subscription window; free-plan users count
 all-time. Everything is checked in the service layer (like the L1 gate).
 """
@@ -101,11 +102,38 @@ def listings_used(db: Session, user: User) -> int:
 
 def contact_reveals_used(db: Session, user: User,
                          since: datetime | None) -> int:
-    q = select(func.count(PropertyInquiry.id)).where(
+    """Distinct owners contacted — a repeat reveal to the same owner is
+    free and never consumes another credit."""
+    q = select(func.count(PropertyInquiry.owner_id.distinct())).where(
         PropertyInquiry.buyer_id == user.id)
     if since:
         q = q.where(PropertyInquiry.created_at >= since)
     return db.scalar(q) or 0
+
+
+def _already_revealed(db: Session, user: User, owner_id: int) -> bool:
+    """Buyer has a prior inquiry with this owner (any window) — re-reveals
+    are free."""
+    return db.scalar(
+        select(PropertyInquiry.id).where(
+            PropertyInquiry.buyer_id == user.id,
+            PropertyInquiry.owner_id == owner_id).limit(1)) is not None
+
+
+def check_contact_reveal(db: Session, user: User, owner_id: int) -> None:
+    """Gate: revealing an owner's contact. Free if this owner was already
+    revealed; else raises LIMIT_REACHED when the window quota is spent."""
+    if _already_revealed(db, user, owner_id):
+        return
+    plan, sub = effective_plan(db, user, "BUYER")
+    limit = plan.features.get("contact_reveals")
+    if limit is not None:
+        used = contact_reveals_used(db, user, _window_start(db, user, sub))
+        if used >= limit:
+            raise ApiError(
+                403, "LIMIT_REACHED",
+                f"Plan '{plan.name}' includes {limit} owner contacts — "
+                "upgrade for more")
 
 
 def check_listing_slot(db: Session, user: User) -> None:
@@ -118,20 +146,6 @@ def check_listing_slot(db: Session, user: User) -> None:
             403, "LIMIT_REACHED",
             f"Plan '{plan.name}' allows {limit} live listing(s) — "
             "upgrade for more")
-
-
-def check_contact_reveal(db: Session, user: User) -> None:
-    """Gate: revealing an owner's contact. Raises LIMIT_REACHED when the
-    plan's contact_reveals quota is exhausted for the window."""
-    plan, sub = effective_plan(db, user, "BUYER")
-    limit = plan.features.get("contact_reveals")
-    if limit is not None:
-        used = contact_reveals_used(db, user, _window_start(db, user, sub))
-        if used >= limit:
-            raise ApiError(
-                403, "LIMIT_REACHED",
-                f"Plan '{plan.name}' includes {limit} owner contacts — "
-                "upgrade for more")
 
 
 def usage_snapshot(db: Session, user: User) -> dict:

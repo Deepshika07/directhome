@@ -326,7 +326,7 @@ def create_inquiry(
     if payload.contact_method not in {"PHONE", "WHATSAPP", "EMAIL", "PLATFORM"}:
         raise bad_request("INVALID_CONTACT_METHOD", "Unknown contact_method")
     from app.services import billing_service
-    billing_service.check_contact_reveal(db, user)
+    billing_service.check_contact_reveal(db, user, prop.owner_id)
     inquiry = PropertyInquiry(
         property_id=prop.id, buyer_id=user.id, owner_id=prop.owner_id,
         message=payload.message, contact_method=payload.contact_method,

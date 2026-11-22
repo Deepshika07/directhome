@@ -224,7 +224,7 @@ r = client.post(f"/api/v1/properties/{p2}/submit", headers=auth(s))
 check("after plan edit, second listing submits", r.status_code == 200,
       r.text[:200])
 
-# ---------- 5. contact-reveal gate ----------
+# ---------- 5. contact-reveal gate (distinct-owner credits) ----------
 r = client.put("/api/v1/admin/billing/plans/" +
                str(next(p["id"] for p in
                         client.get("/api/v1/billing/plans").json()["data"]
@@ -234,36 +234,81 @@ r = client.put("/api/v1/admin/billing/plans/" +
 check("admin tightens FREE_BUYER to 2 contacts",
       r.json()["data"]["features"]["contact_reveals"] == 2)
 
-# need an ACTIVE listing to inquire on — approve p1 via admin
+# need ACTIVE listings from distinct owners — approve p1 (owner s)
 r = client.post(f"/api/v1/admin/properties/{p1}/approve", headers=auth(admin))
 check("p1 approved → ACTIVE", r.json()["data"]["status"] == "ACTIVE")
 
-for i in range(2):
-    r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
-                    json={"message": f"hi {i}", "contact_method": "PHONE"})
-    check(f"inquiry {i+1} within free quota", r.status_code == 201, r.text[:160])
+# second owner: s2 KYC + listing p3 + approve
+accept_requirements(s2)
+complete_kyc(s2, "BILLB", "Bill Seller2")
+r = client.post("/api/v1/properties", headers=auth(s2), json=LISTING2)
+p3 = r.json()["data"]["id"]
+r = client.post(f"/api/v1/properties/{p3}/submit", headers=auth(s2))
+check("s2 listing submits (1-slot plan)", r.status_code == 200, r.text[:200])
+client.post(f"/api/v1/admin/properties/{p3}/approve", headers=auth(admin))
+
+# third owner: s3 for the limit-exceeded attempt + paid-window check
+s3_id, s3, _ = register("Bill Seller3")
+accept_requirements(s3)
+complete_kyc(s3, "BILLC", "Bill Seller3")
+r = client.post("/api/v1/properties", headers=auth(s3), json={
+    **LISTING, "title": "Third flat",
+    "location": {**LISTING["location"], "locality": f"ThirdLoc{RUN_ID}",
+                 "city": "Delhi"},
+    "media": [{"media_type": "IMAGE", "url": "https://z.com/c.jpg",
+               "is_primary": True}]})
+p4 = r.json()["data"]["id"]
+client.post(f"/api/v1/properties/{p4}/submit", headers=auth(s3))
+client.post(f"/api/v1/admin/properties/{p4}/approve", headers=auth(admin))
 
 r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
-                json={"message": "third", "contact_method": "PHONE"})
-check("3rd inquiry → LIMIT_REACHED",
+                json={"message": "hi owner1", "contact_method": "PHONE"})
+check("inquiry #1: first distinct owner", r.status_code == 201
+      and r.json()["data"]["owner_contact"]["phone"], r.text[:160])
+
+r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
+                json={"message": "revisit", "contact_method": "PHONE"})
+check("repeat inquiry to same owner is FREE (no credit used)",
+      r.status_code == 201, r.text[:200])
+
+r = client.get("/api/v1/billing/me", headers=auth(b))
+check("distinct-owner counter = 1 after repeat",
+      r.json()["data"]["buyer"]["used"] == 1, r.text[:200])
+
+r = client.post(f"/api/v1/properties/{p3}/inquiries", headers=auth(b),
+                json={"message": "hi owner2", "contact_method": "PHONE"})
+check("inquiry #2: second distinct owner", r.status_code == 201)
+
+r = client.post(f"/api/v1/properties/{p4}/inquiries", headers=auth(b),
+                json={"message": "hi owner3", "contact_method": "PHONE"})
+check("3rd distinct owner → LIMIT_REACHED",
       r.status_code == 403 and r.json()["error"]["code"] == "LIMIT_REACHED",
       r.text[:200])
 
-# buyer upgrades → quota lifts
+r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
+                json={"message": "revisit again", "contact_method": "PHONE"})
+check("repeat contact still allowed AT the limit",
+      r.status_code == 201, r.text[:200])
+
+# buyer upgrades → paid window resets the distinct-owner counter
 r = client.post("/api/v1/billing/orders", headers=auth(b),
                 json={"plan_id": basic_buyer})
 order_b = r.json()["data"]["order_id"]
 client.post(f"/api/v1/billing/orders/{order_b}/confirm",
             headers=auth(b), json={})
-# BASIC_BUYER limit is 2 — window resets on subscribe, so +2 more allowed
-for i in range(2):
-    r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
-                    json={"message": f"paid {i}", "contact_method": "PHONE"})
-    check(f"paid inquiry {i+1} allowed", r.status_code == 201)
-r = client.post(f"/api/v1/properties/{p1}/inquiries", headers=auth(b),
-                json={"message": "over", "contact_method": "PHONE"})
-check("paid quota (2) also enforced", r.status_code == 403
-      and r.json()["error"]["code"] == "LIMIT_REACHED")
+
+r = client.post(f"/api/v1/properties/{p4}/inquiries", headers=auth(b),
+                json={"message": "now paid", "contact_method": "PHONE"})
+check("paid window: previously-blocked owner now allowed",
+      r.status_code == 201, r.text[:200])
+
+r = client.post(f"/api/v1/properties/{p4}/inquiries", headers=auth(b),
+                json={"message": "paid revisit", "contact_method": "PHONE"})
+check("paid repeat also free", r.status_code == 201)
+
+r = client.get("/api/v1/billing/me", headers=auth(b))
+check("paid window used=1 (repeat doesn't count)",
+      r.json()["data"]["buyer"]["used"] == 1, r.text[:200])
 
 # ---------- 6. admin grant / revoke ----------
 r = client.post("/api/v1/admin/billing/grants", headers=auth(admin),

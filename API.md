@@ -268,7 +268,7 @@ Security: PAN/Aadhaar never logged; PAN masked for reviewers (`unmask` is not ex
 
 ## Billing & subscriptions — Phase 1 (mock provider)
 
-Entitlements live in `plans.features` JSONB — admins create/edit plans freely, no deploys. Known feature keys: `max_active_listings` (SELLER — concurrent PENDING_REVIEW+ACTIVE+PAUSED+FLAGGED listings), `contact_reveals` (BUYER — inquiries per window). `null` = unlimited. Seeded `FREE_SELLER`/`FREE_BUYER` are unlimited (mirrors pre-billing behavior) until an admin tightens them.
+Entitlements live in `plans.features` JSONB — admins create/edit plans freely, no deploys. Known feature keys: `max_active_listings` (SELLER — concurrent PENDING_REVIEW+ACTIVE+PAUSED+FLAGGED listings), `contact_reveals` (BUYER — **distinct owners** per window; re-contacting an owner already revealed is always free, even at the limit). `null` = unlimited. Seeded `FREE_SELLER`/`FREE_BUYER` are unlimited (mirrors pre-billing behavior) until an admin tightens them.
 
 **Gate points:** `POST /properties/{id}/submit` checks listing slots; `POST /properties/{id}/inquiries` checks contact quota. Both return `403 LIMIT_REACHED` when exhausted — show the plan catalogue to upgrade. No plan configured at all → `403 PLAN_REQUIRED`.
 
